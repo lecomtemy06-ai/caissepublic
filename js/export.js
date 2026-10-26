@@ -8,7 +8,10 @@
 import { Stockage } from './stockage.js';
 import { toutesLesVentes, ventesDuJour, dateComptable } from './ventes.js';
 import { getCatalogue } from './catalogue.js';
-import { listerClotures } from './cloture.js';
+import { listerClotures, rassemblerClotures } from './cloture.js';
+import { nombreFr } from './format.js';
+import { libellesSupplements } from './ticket.js';
+import { listerFichiersDistants, obtenirVentesDistantes } from './github-sync.js';
 
 export function telechargerFichier(nom, contenu, mime = 'text/plain') {
   const blob = new Blob([contenu], { type: mime + ';charset=utf-8' });
@@ -28,25 +31,92 @@ function csvEchappe(v) {
 }
 
 function construireCsvVentes(ventes) {
-  const lignes = ['NumTicket;DateComptable;DateHeure;Appareil;Consommation;Article;Quantite;PrixUnitaireTTC;TauxTVA;TotalLigneTTC;ModePaiement;TotalTicketTTC'];
+  const lignes = ['NumTicket;DateComptable;DateHeure;Appareil;Consommation;Article;Supplements;Quantite;PrixUnitaireTTC;TauxTVA;TotalLigneTTC;ModePaiement;TotalTicketTTC'];
   ventes.forEach(v => {
     v.lignes.forEach(l => {
       lignes.push([
         v.numero, v.dateComptable, v.dateAffichee + ' ' + v.heureAffichee, v.appareil || '', v.modeConsommation || '',
-        csvEchappe(l.nom), l.quantite, l.prixUnitaire.toFixed(2), l.tva,
-        (l.prixUnitaire * l.quantite).toFixed(2), v.modePaiement, v.totalTTC.toFixed(2)
+        csvEchappe(l.nom), csvEchappe(libellesSupplements(l.supplements).join(' + ')), l.quantite, nombreFr(l.prixUnitaire), l.tva,
+        nombreFr(l.prixUnitaire * l.quantite), v.modePaiement, nombreFr(v.totalTTC)
       ].join(';'));
     });
   });
-  return lignes.join('\n');
+  return '\ufeff' + lignes.join('\r\n');
 }
 
-export function exporterVentesCSV(toutes) {
+// Rassemble les ventes de CET appareil et du dépôt privé, sans doublon
+// (un ticket = un numéro). `toutes` = false : journée comptable en cours
+// seulement. Les données locales ne sont pas modifiées.
+// Renvoie { ventes, distantInjoignable, partiel }.
+export async function rassemblerVentes(toutes) {
   const date = dateComptable();
-  const ventes = toutes ? toutesLesVentes() : ventesDuJour(date);
-  if (!ventes.length) return false;
-  telechargerFichier(toutes ? `ventes_completes_${date}.csv` : `ventes_${date}.csv`, construireCsvVentes(ventes), 'text/csv');
-  return true;
+  const parNumero = new Map();
+  (toutes ? toutesLesVentes() : ventesDuJour(date)).forEach(t => parNumero.set(t.numero, t));
+
+  let distantInjoignable = false;
+  let partiel = false;
+  const retenir = (liste) => liste.forEach(t => parNumero.set(t.numero, t));
+
+  if (toutes) {
+    const dates = await listerFichiersDistants('ventes');
+    if (dates === null) distantInjoignable = true;
+    else {
+      const file = [...dates];
+      const travailleur = async () => {
+        while (file.length) {
+          const liste = await obtenirVentesDistantes(file.shift());
+          if (liste === null) partiel = true; else retenir(liste);
+        }
+      };
+      await Promise.all([travailleur(), travailleur(), travailleur(), travailleur()]);
+    }
+  } else {
+    const liste = await obtenirVentesDistantes(date);
+    if (liste === null) distantInjoignable = true; else retenir(liste);
+  }
+
+  const ventes = [...parNumero.values()].sort((a, b) => String(a.horodatage).localeCompare(String(b.horodatage)));
+  return { ventes, distantInjoignable, partiel };
+}
+
+export async function exporterVentesCSV(toutes) {
+  const date = dateComptable();
+  const r = await rassemblerVentes(toutes);
+  if (r.ventes.length) {
+    telechargerFichier(toutes ? `ventes_completes_${date}.csv` : `ventes_${date}.csv`, construireCsvVentes(r.ventes), 'text/csv');
+  }
+  return { nombre: r.ventes.length, distantInjoignable: r.distantInjoignable, partiel: r.partiel };
+}
+
+// ===== Export comptable des clôtures =====
+// Une ligne par journée comptable. Séparateur ";" et virgule décimale
+// (convention belge : s'ouvre correctement dans Excel), BOM UTF-8 pour
+// les accents.
+export function construireCsvClotures(clotures) {
+  const taux = ['6', '12', '21'];
+  const entete = ['Date', 'NbTickets', 'TicketMoyenTTC', 'TotalLiquideTTC', 'TotalBancontactTTC', 'TotalEmporterTTC', 'TotalSurPlaceTTC', 'TotalLivraisonTTC', 'ModeNonPreciseTTC'];
+  taux.forEach(t => entete.push(`BaseHT_${t}%`, `TVA_${t}%`, `TTC_${t}%`));
+  entete.push('TotalTVA', 'TotalJourneeTTC');
+  const lignes = [entete.join(';')];
+  clotures.forEach(c => {
+    const l = [c.date, c.nbTickets, nombreFr(c.ticketMoyen), nombreFr(c.totalLiquide), nombreFr(c.totalBancontact),
+      nombreFr(c.totalEmporter), nombreFr(c.totalSurPlace), nombreFr(c.totalLivraison), nombreFr(c.totalNonPrecise)];
+    taux.forEach(t => {
+      const v = (c.ventilationGlobale || {})[t] || { ht: 0, tva: 0, ttc: 0 };
+      l.push(nombreFr(v.ht), nombreFr(v.tva), nombreFr(v.ttc));
+    });
+    l.push(nombreFr(c.totalTVAJour), nombreFr(c.totalJour));
+    lignes.push(l.join(';'));
+  });
+  return '\ufeff' + lignes.join('\r\n');
+}
+
+export async function exporterCloturesCSV() {
+  const r = await rassemblerClotures();
+  if (r.clotures.length) {
+    telechargerFichier(`clotures_completes_${dateComptable()}.csv`, construireCsvClotures(r.clotures), 'text/csv');
+  }
+  return { nombre: r.clotures.length, distantInjoignable: r.distantInjoignable };
 }
 
 export function exporterSauvegardeJSON() {
@@ -55,6 +125,7 @@ export function exporterSauvegardeJSON() {
     catalogue: getCatalogue(),
     ventes: toutesLesVentes(),
     clotures: listerClotures(),
+    caisses: Stockage.chargerCaisses(),
     identifiantCaisse: Stockage.chargerIdentifiantCaisse(),
     compteurSecours: Stockage.chargerCompteurSecours()
   };
@@ -65,6 +136,7 @@ export function restaurerSauvegarde(data) {
   if (data.catalogue) Stockage.sauvegarderCatalogue(data.catalogue);
   if (data.ventes) Stockage.sauvegarderVentes(data.ventes);
   if (data.clotures) Stockage.sauvegarderClotures(data.clotures);
+  if (data.caisses) Stockage.sauvegarderCaisses(data.caisses);
   if (data.identifiantCaisse) Stockage.definirIdentifiantCaisse(data.identifiantCaisse);
   if (data.compteurSecours) Stockage.sauvegarderCompteurSecours(data.compteurSecours);
 }

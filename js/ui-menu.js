@@ -11,8 +11,12 @@
  * Dans les deux cas, la page des suppléments est toujours proposée
  * ensuite.
  *
- * Les articles marqués "promotion" dans le catalogue affichent un petit
- * badge 🏷️ sur leur bouton — purement visuel.
+ * Les articles marqués "promotion" affichent un petit badge 🏷️ et les
+ * "favoris" une étoile ⭐ sur leur bouton — purement visuel (ils restent
+ * à leur place dans l'ordre alphabétique, voir tri.js).
+ *
+ * Les articles `special: 'prix-libre'` (ex. "Salade Divers") ouvrent une
+ * pop-up pour encoder leur prix à chaque vente.
  *
  * La catégorie "Divers" peut contenir un article spécial "Ristourne"
  * (repéré par `special: 'ristourne'`) : il ouvre une pop-up dédiée pour
@@ -23,6 +27,9 @@ import { ajouterArticle, supprimerArticle, getPanier, getTotal, onChangement } f
 import { getMode, onModeChange, tvaEffective } from './consommation.js';
 import { enregistrerAction, escapeHtml } from './ui-modal.js';
 import { ouvrirRistournePopup } from './ui-ristourne.js';
+import { ouvrirPrixLibrePopup } from './ui-prix-libre.js';
+import { libellesSupplements } from './ticket.js';
+import { trierEntrees } from './tri.js';
 
 const elMenu = () => document.getElementById('zone-menu');
 const elFooter = () => document.getElementById('zone-footer');
@@ -39,7 +46,7 @@ export function initUiMenu() {
 }
 
 function badge(obj) {
-  return obj.promo ? '🏷️ ' : '';
+  return (obj.favori ? '⭐ ' : '') + (obj.promo ? '🏷️ ' : '');
 }
 
 function prixHtml(prix) {
@@ -77,7 +84,7 @@ function afficherArticles(categorie) {
   const catalogue = getCatalogue();
 
   if (categorie === 'Plats') {
-    Object.entries(catalogue.categories.Plats.types).forEach(([nom, obj]) => {
+    trierEntrees(Object.entries(catalogue.categories.Plats.types), 'Plats').forEach(([nom, obj]) => {
       const btn = document.createElement('button');
       btn.className = 'btn-menu';
       btn.textContent = badge(obj) + nom;
@@ -85,10 +92,13 @@ function afficherArticles(categorie) {
       menu.appendChild(btn);
     });
   } else {
-    Object.entries(catalogue.categories[categorie]).forEach(([nom, obj]) => {
+    trierEntrees(Object.entries(catalogue.categories[categorie]), categorie).forEach(([nom, obj]) => {
       const btn = document.createElement('button');
       btn.className = 'btn-menu';
-      if (obj.special === 'ristourne') {
+      if (obj.special === 'prix-libre') {
+        btn.innerHTML = `${badge(obj)}${escapeHtml(nom)}<br><span style="color:var(--accent);font-size:0.8em">Prix à saisir</span>`;
+        btn.addEventListener('click', () => ouvrirPrixLibrePopup(nom, obj.tva));
+      } else if (obj.special === 'ristourne') {
         btn.innerHTML = `${badge(obj)}${escapeHtml(nom)}<br><span style="color:var(--accent);font-size:0.8em">Montant variable</span>`;
         btn.addEventListener('click', () => ouvrirRistournePopup());
       } else {
@@ -110,7 +120,7 @@ function afficherViandes(typePlat) {
 
   if (type.prixFixes) {
     // Format à prix fixes : choix et prix propres à ce format
-    Object.entries(type.prixFixes).forEach(([nom, obj]) => {
+    trierEntrees(Object.entries(type.prixFixes), 'Plats').forEach(([nom, obj]) => {
       const tva = obj.tva !== undefined ? obj.tva : type.tva;
       const btn = document.createElement('button');
       btn.className = 'btn-menu';
@@ -120,7 +130,7 @@ function afficherViandes(typePlat) {
     });
   } else {
     // Format additif : prix du format + prix de la viande
-    Object.entries(catalogue.categories.Plats.viandes).forEach(([nom, obj]) => {
+    trierEntrees(Object.entries(catalogue.categories.Plats.viandes), 'Plats').forEach(([nom, obj]) => {
       const prix = arrondi(type.prix + obj.prix);
       const btn = document.createElement('button');
       btn.className = 'btn-menu';
@@ -135,11 +145,16 @@ function afficherViandes(typePlat) {
 
 // Page des suppléments, toujours proposée après le choix du plat.
 // `base` = { prix, tva } du plat choisi (avant suppléments).
-function afficherOptions(typePlat, choix, base) {
+// `etat` conserve la sélection quand on part choisir une viande supplémentaire
+// puis qu'on revient : { selection: {nom: nb}, viandes: [noms…] }.
+function afficherOptions(typePlat, choix, base, etat = { selection: {}, viandes: [] }) {
   const { menu, footer } = reinitialiserEcran();
   menu.style.gridTemplateColumns = 'repeat(2, 1fr)';
   const catalogue = getCatalogue();
-  const selection = {};
+  const selection = etat.selection;
+  const viandesSupp = etat.viandes; // viandes supplémentaires (une entrée par viande ajoutée)
+  const prixViande = (n) => (catalogue.categories.Plats.viandes[n] || {}).prix || 0;
+  const ordreAffichage = []; // ordre (alphabétique) des suppléments affichés
   let totalVar = base.prix;
 
   const label = document.createElement('div');
@@ -149,26 +164,76 @@ function afficherOptions(typePlat, choix, base) {
 
   function recalc() {
     let extra = 0;
-    Object.entries(selection).forEach(([n, v]) => { if (v) extra += catalogue.supplements[n].prix; });
+    Object.entries(selection).forEach(([n, nb]) => { if (nb) extra += catalogue.supplements[n].prix * nb; });
+    viandesSupp.forEach(n => { extra += prixViande(n); });
     totalVar = arrondi(base.prix + extra);
     label.textContent = 'TOTAL : ' + totalVar.toFixed(2) + ' €';
   }
 
-  // Certains suppléments ne s'appliquent qu'à certains formats
-  // (champ `formats`, ex. "Frites + Sauces" pour Pain rond/Poche/Durum).
-  Object.entries(catalogue.supplements)
+  // Viande supplémentaire (ex. double hamburger) : ouvre la liste des viandes ;
+  // chaque viande choisie s'ajoute aux suppléments, à son prix du catalogue.
+  const rangeeViande = document.createElement('div');
+  rangeeViande.style.cssText = 'grid-column:1/-1;display:flex;gap:4px';
+  const btnViande = document.createElement('button');
+  btnViande.className = 'btn-menu';
+  btnViande.style.cssText = 'flex:1;border:2px solid var(--accent)';
+  const moinsViande = document.createElement('button');
+  moinsViande.className = 'btn-menu orange';
+  moinsViande.textContent = '−1';
+  moinsViande.style.cssText = 'flex:0 0 64px';
+  const afficherViandeSupp = () => {
+    const nb = {};
+    viandesSupp.forEach(n => { nb[n] = (nb[n] || 0) + 1; });
+    const resume = Object.entries(nb).map(([n, k]) => (k > 1 ? `${k} x ${n}` : n)).join(', ');
+    btnViande.innerHTML = `🥩 Supplément viande${resume ? `<br><span style="color:var(--accent);font-size:0.85em">${escapeHtml(resume)}</span>` : ''}`;
+    moinsViande.style.display = viandesSupp.length ? '' : 'none';
+  };
+  afficherViandeSupp();
+  btnViande.addEventListener('click', () => afficherChoixViandeSupp(typePlat, choix, base, etat));
+  moinsViande.addEventListener('click', () => { viandesSupp.pop(); afficherViandeSupp(); recalc(); });
+  rangeeViande.append(btnViande, moinsViande);
+  menu.appendChild(rangeeViande);
+
+  // Ordre : voir tri.js (Salade, Tomates, Oignon, puis alphabétique, puis
+  // les suppléments cumulables comme "Suppléments Divers" en dernier).
+  // Certains suppléments ne s'appliquent qu'à certains formats (champ
+  // `formats`). `selection[nom]` = nombre de fois choisi : 0/1 pour un
+  // supplément ordinaire, plusieurs clics possibles pour un `multiple`.
+  trierEntrees(Object.entries(catalogue.supplements), 'SUPPLEMENTS')
     .filter(([, obj]) => !obj.formats || obj.formats.includes(typePlat))
     .forEach(([nom, obj]) => {
       const btn = document.createElement('button');
       btn.className = 'btn-menu';
-      btn.innerHTML = `${badge(obj)}${escapeHtml(nom)}<br>${prixHtml(obj.prix)}`;
-      btn.addEventListener('click', () => {
-        selection[nom] = !selection[nom];
-        btn.style.outline = selection[nom] ? '3px solid var(--accent)' : '';
-        recalc();
-      });
-      menu.appendChild(btn);
+      ordreAffichage.push(nom);
+      selection[nom] = selection[nom] || 0;
+
+      const afficher = () => {
+        const n = selection[nom];
+        btn.innerHTML = `${badge(obj)}${escapeHtml(nom)}${obj.multiple && n ? ` <b>× ${n}</b>` : ''}<br>${prixHtml(obj.prix)}`;
+        btn.style.outline = n ? '3px solid var(--accent)' : '';
+      };
+      afficher();
+
+      if (obj.multiple) {
+        // cumulable : chaque clic en ajoute un (comme une boisson) ; −1 en retire un
+        const rangee = document.createElement('div');
+        rangee.style.cssText = 'grid-column:1/-1;display:flex;gap:4px';
+        btn.style.flex = '1';
+        btn.addEventListener('click', () => { selection[nom]++; afficher(); recalc(); });
+        const moins = document.createElement('button');
+        moins.className = 'btn-menu orange';
+        moins.textContent = '−1';
+        moins.style.cssText = 'flex:0 0 64px';
+        moins.addEventListener('click', () => { if (selection[nom] > 0) selection[nom]--; afficher(); recalc(); });
+        rangee.append(btn, moins);
+        menu.appendChild(rangee);
+      } else {
+        btn.addEventListener('click', () => { selection[nom] = selection[nom] ? 0 : 1; afficher(); recalc(); });
+        menu.appendChild(btn);
+      }
     });
+
+  recalc(); // total correct au retour d'un choix de viande supplémentaire
 
   footer.style.display = 'grid';
   footer.style.gridTemplateColumns = '1fr 1fr';
@@ -185,10 +250,37 @@ function afficherOptions(typePlat, choix, base) {
   btnValider.className = 'btn-menu vert';
   btnValider.textContent = '✅ Valider';
   btnValider.addEventListener('click', () => {
-    ajouterArticle(`${typePlat} ${choix}`, totalVar, base.tva);
+    // dans l'ordre d'affichage ; un supplément cumulable est répété autant de fois que choisi
+    const choisis = [
+      ...viandesSupp.map(n => 'Supp. ' + n),
+      ...ordreAffichage.flatMap(n => Array(selection[n] || 0).fill(n)),
+    ];
+    ajouterArticle(`${typePlat} ${choix}`, totalVar, base.tva, choisis);
     afficherCategories();
   });
   footer.appendChild(btnValider);
+}
+
+// Liste des viandes pour le supplément : un clic ajoute la viande et revient
+// à la page des suppléments (la sélection en cours est conservée).
+function afficherChoixViandeSupp(typePlat, choix, base, etat) {
+  const { menu, footer } = reinitialiserEcran();
+  const catalogue = getCatalogue();
+  const titre = document.createElement('div');
+  titre.style.cssText = 'grid-column:1/-1;color:var(--accent);font-size:18px;font-weight:bold;text-align:center;padding:6px;';
+  titre.textContent = 'Supplément viande';
+  menu.appendChild(titre);
+  trierEntrees(Object.entries(catalogue.categories.Plats.viandes), 'Plats').forEach(([nom, obj]) => {
+    const btn = document.createElement('button');
+    btn.className = 'btn-menu';
+    btn.innerHTML = `${escapeHtml(nom)}<br>+ ${prixHtml(obj.prix)}`;
+    btn.addEventListener('click', () => {
+      etat.viandes.push(nom);
+      afficherOptions(typePlat, choix, base, etat);
+    });
+    menu.appendChild(btn);
+  });
+  ajouterBoutonRetour(footer, () => afficherOptions(typePlat, choix, base, etat));
 }
 
 function ajouterBoutonRetour(footer, action) {
@@ -212,8 +304,10 @@ function rafraichirPanier({ total, panier }) {
       const ligne = document.createElement('div');
       ligne.className = 'panier-ligne';
       const libelle = (item.quantite > 1 ? item.quantite + ' x ' : '') + item.nom;
+      const details = libellesSupplements(item.supplements)
+        .map(s => `<div class="panier-sup">+ ${escapeHtml(s)}</div>`).join('');
       ligne.innerHTML = `
-        <span class="panier-nom">${escapeHtml(libelle)}</span>
+        <span class="panier-nom">${escapeHtml(libelle)}${details}</span>
         <span class="panier-tva">${tvaEffective(item.tva, mode)}%</span>
         <span class="panier-prix">${(item.prixUnitaire * item.quantite).toFixed(2)} €</span>
         <button class="panier-suppr" data-action="supprimerLigne" data-args="[${i}]">✕</button>`;

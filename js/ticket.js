@@ -25,6 +25,14 @@ export function calculerVentilationTVA(lignes) {
   return parTaux;
 }
 
+// Libellés des suppléments d'une ligne, un par ligne de ticket. Un
+// supplément cumulable choisi plusieurs fois est regroupé : "2 x Suppléments Divers".
+export function libellesSupplements(supplements) {
+  const comptes = new Map();
+  (supplements || []).forEach(s => comptes.set(s, (comptes.get(s) || 0) + 1));
+  return [...comptes.entries()].map(([nom, n]) => (n > 1 ? `${n} x ${nom}` : nom));
+}
+
 function centrer(txt, largeur) {
   txt = String(txt);
   if (txt.length >= largeur) return txt.slice(0, largeur);
@@ -35,8 +43,8 @@ function centrer(txt, largeur) {
 function ligneColonnes(qte, nom, pu, tva, total) {
   const q = String(qte).padStart(3);
   let d = String(nom);
-  if (d.length > 17) d = d.slice(0, 16) + '…';
-  d = d.padEnd(18);
+  if (d.length > 16) d = d.slice(0, 15) + '…';
+  d = d.padEnd(17); // 3+1+17+6+1+5+1+8 = 42 colonnes exactement
   const p = String(pu).padStart(6);
   const t = String(tva).padStart(5);
   const tot = String(total).padStart(8);
@@ -73,7 +81,11 @@ export function creerTicket(numero, panier, modePaiement, dateComptable, apparei
 // Met en forme un ticket au format texte légal :
 // identité de la société, n° TVA, date/heure, n° de ticket, détail des
 // lignes, base HT et TVA ventilées par taux, total TVA, total TTC.
-export function formaterTicketTexte(t) {
+// Avec `options.copie` (date/heure de la réimpression), le ticket porte
+// la mention "COPIE" en tête et en pied : il ne peut pas passer pour
+// l'original. Le ticket enregistré, lui, n'est jamais modifié.
+export function formaterTicketTexte(t, options = {}) {
+  const copie = options.copie || null;
   const sep = '='.repeat(LARGEUR_TICKET);
   const sep2 = '-'.repeat(LARGEUR_TICKET);
   const L = [];
@@ -84,6 +96,11 @@ export function formaterTicketTexte(t) {
   L.push(centrer(SOCIETE.adresse2, LARGEUR_TICKET));
   L.push(centrer('N° TVA : ' + SOCIETE.tva, LARGEUR_TICKET));
   L.push(sep);
+  if (copie) {
+    L.push(centrer('*** COPIE — DUPLICATA ***', LARGEUR_TICKET));
+    L.push(centrer('Réimprimé le ' + copie, LARGEUR_TICKET));
+    L.push(sep2);
+  }
   L.push(`Ticket N° ${t.numero}`);
   L.push(`Date : ${t.dateAffichee}    Heure : ${t.heureAffichee}`);
   if (t.modeConsommation) L.push(`Consommation : ${libelleMode(t.modeConsommation)}`);
@@ -93,6 +110,8 @@ export function formaterTicketTexte(t) {
   t.lignes.forEach(l => {
     const tot = (l.prixUnitaire * l.quantite).toFixed(2);
     L.push(ligneColonnes(l.quantite, l.nom, l.prixUnitaire.toFixed(2), l.tva + '%', tot));
+    // un supplément par ligne, en retrait (leur prix est inclus dans la ligne)
+    libellesSupplements(l.supplements).forEach(s => L.push(('    + ' + s).slice(0, LARGEUR_TICKET)));
   });
   L.push(sep2);
   Object.keys(t.ventilation).sort((a, b) => a - b).forEach(taux => {
@@ -108,6 +127,7 @@ export function formaterTicketTexte(t) {
   L.push(sep);
   L.push(centrer('Merci de votre visite !', LARGEUR_TICKET));
   L.push(centrer('TVA incluse conformément à la législation', LARGEUR_TICKET));
+  if (copie) L.push(centrer('*** COPIE — DUPLICATA ***', LARGEUR_TICKET));
   L.push(sep);
   return L.join('\n');
 }

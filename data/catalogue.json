@@ -1,4 +1,5 @@
 {
+  "version": 3,
   "categories": {
     "Plats": {
       "types": {
@@ -75,6 +76,11 @@
             "Tenders": {
               "prix": 9,
               "tva": 6
+            },
+            "Mulky": {
+              "prix": 8,
+              "tva": 6,
+              "promo": false
             }
           }
         },
@@ -187,6 +193,11 @@
         "Steak bœuf": {
           "prix": 4.5,
           "tva": 6
+        },
+        "Cervela": {
+          "prix": 4.2,
+          "tva": 6,
+          "promo": false
         }
       }
     },
@@ -200,119 +211,100 @@
         "tva": 6
       }
     },
+    "Salades": {
+      "Salade César": {
+        "prix": 9,
+        "tva": 6,
+        "promo": false
+      },
+      "Salade Divers": {
+        "prix": 0,
+        "tva": 6,
+        "special": "prix-libre"
+      }
+    },
     "Desserts": {
-      "Chips Petit": {
-        "prix": 2,
+      "Chips": {
+        "prix": 4,
         "tva": 6
       },
-      "Kinder bueno": {
-        "prix": 2,
+      "Chocolat": {
+        "prix": 3,
         "tva": 6
       },
-      "Kinder country": {
-        "prix": 2,
+      "Friandise": {
+        "prix": 3.5,
         "tva": 6
       },
-      "Kinder Maxi": {
-        "prix": 2,
-        "tva": 6
-      },
-      "Milka Leo": {
-        "prix": 2,
-        "tva": 6
-      },
-      "Milka Tablette": {
-        "prix": 2,
-        "tva": 6
-      },
-      "Mars": {
-        "prix": 2,
-        "tva": 6
-      },
-      "Twix": {
-        "prix": 2,
-        "tva": 6
-      },
-      "Snikers": {
-        "prix": 2,
-        "tva": 6
-      },
-      "Mélange bonbon": {
-        "prix": 2,
-        "tva": 6
-      },
-      "Pistache": {
-        "prix": 2,
-        "tva": 6
-      },
-      "Cacahuete": {
-        "prix": 2,
-        "tva": 6
-      },
-      "Noix": {
-        "prix": 2,
-        "tva": 6
-      },
-      "Noix Cajoux": {
-        "prix": 2,
-        "tva": 6
-      },
-      "Chewing gum": {
-        "prix": 2,
-        "tva": 6
-      },
-      "Casis": {
-        "prix": 2,
-        "tva": 6
-      },
-      "Chacha": {
-        "prix": 2,
-        "tva": 6
-      },
-      "Balisto": {
-        "prix": 2,
-        "tva": 6
-      },
-      "Bounty": {
-        "prix": 2,
-        "tva": 6
+      "Kermesse": {
+        "prix": 3,
+        "tva": 6,
+        "promo": false
       }
     },
     "Boissons": {
-      "Soft 20cl": {
-        "prix": 2,
+      "Caprisun": {
+        "prix": 1.5,
+        "tva": 6
+      },
+      "Ayran": {
+        "prix": 1.5,
         "tva": 6
       },
       "Soft 33cl": {
-        "prix": 2,
+        "prix": 2.2,
         "tva": 6
       },
       "Soft 50cl": {
-        "prix": 2,
+        "prix": 3.5,
         "tva": 6
       },
       "Soft 1,5l": {
         "prix": 5,
         "tva": 6
       },
-      "Bière 33cl": {
-        "prix": 2,
+      "Jupiler 33cl": {
+        "prix": 2.5,
         "tva": 21
       },
-      "Bière 50cl": {
-        "prix": 2,
+      "Jupiler 50cl": {
+        "prix": 4,
+        "tva": 21
+      },
+      "Stella 33cl": {
+        "prix": 2.8,
+        "tva": 21
+      },
+      "Maes 33cl": {
+        "prix": 2.8,
+        "tva": 21
+      },
+      "Hoegarden Rosée": {
+        "prix": 3,
+        "tva": 21
+      },
+      "Leffe": {
+        "prix": 4.5,
         "tva": 21
       },
       "Vin": {
-        "prix": 2,
+        "prix": 4.5,
         "tva": 21
       },
-      "Eau": {
-        "prix": 2,
+      "Eau 50cl": {
+        "prix": 1,
+        "tva": 6
+      },
+      "Eau 1.5l": {
+        "prix": 2.5,
         "tva": 6
       },
       "Kizilay": {
-        "prix": 2,
+        "prix": 1.5,
+        "tva": 6
+      },
+      "Red-Bull": {
+        "prix": 3,
         "tva": 6
       }
     },
@@ -335,40 +327,71 @@
   "supplements": {
     "Salade": {
       "prix": 0,
-      "tva": 6
+      "tva": 6,
+      "ordre": 1
     },
     "Tomates": {
       "prix": 0,
-      "tva": 6
-    },
-    "Oignons": {
-      "prix": 0,
-      "tva": 6
-    },
-    "Fromagère": {
-      "prix": 1.5,
-      "tva": 6
-    },
-    "Crudités+": {
-      "prix": 0.8,
-      "tva": 6
-    },
-    "Frites+": {
-      "prix": 0.8,
-      "tva": 6
-    },
-    "Sauce+": {
-      "prix": 0.8,
-      "tva": 6
-    },
-    "Frites + Sauces": {
-      "prix": 2.5,
       "tva": 6,
-      "formats": [
-        "Pain rond",
-        "Poche",
-        "Durum"
-      ]
+      "ordre": 2
+    },
+    "Oignon": {
+      "prix": 0,
+      "tva": 6,
+      "ordre": 3
+    },
+    "Oignon Sec": {
+      "prix": 0.6,
+      "tva": 6
+    },
+    "Carottes": {
+      "prix": 0.6,
+      "tva": 6
+    },
+    "Feta": {
+      "prix": 0.6,
+      "tva": 6
+    },
+    "Mais": {
+      "prix": 0.6,
+      "tva": 6
+    },
+    "Choux": {
+      "prix": 0.6,
+      "tva": 6
+    },
+    "Choux Rouge": {
+      "prix": 0.6,
+      "tva": 6
+    },
+    "Cornichon": {
+      "prix": 0.6,
+      "tva": 6
+    },
+    "Olives": {
+      "prix": 0.6,
+      "tva": 6
+    },
+    "Cheese": {
+      "prix": 0.6,
+      "tva": 6
+    },
+    "Frites": {
+      "prix": 0.6,
+      "tva": 6
+    },
+    "Sauce": {
+      "prix": 0.6,
+      "tva": 6
+    },
+    "Jalapenos": {
+      "prix": 0.6,
+      "tva": 6
+    },
+    "Suppléments Divers": {
+      "prix": 0.6,
+      "tva": 6,
+      "multiple": true
     }
   }
 }

@@ -17,10 +17,18 @@ import {
 import { getConfigGithub, obtenirClotureDistante, listerFichiersDistants } from './github-sync.js';
 import { modal, fermerModal, escapeHtml, enregistrerAction, attrArgs } from './ui-modal.js';
 import { telechargerFichier, ecrireFichierDossier } from './export.js';
+import { demanderCode } from './garde-code.js';
+import { libelleMode } from './consommation.js';
+import { imprimerTexte, dateHeureCourante } from './impression.js';
 
 export function initUiHistorique() {
   document.getElementById('btn-historique').addEventListener('click', () => afficherHistorique());
-  document.getElementById('btn-cloture').addEventListener('click', declencherCloture);
+  // Le bon code suffit : pas de confirmation supplémentaire.
+  document.getElementById('btn-cloture').addEventListener('click',
+    () => demanderCode('Code pour clôturer', declencherCloture));
+  enregistrerAction('voirTicket', voirTicket);
+  enregistrerAction('imprimerTicket', imprimerCopieTicket);
+  enregistrerAction('exporterCopieTicket', exporterCopieTicket);
   enregistrerAction('exporterCloture', exporterClotureTxt);
   enregistrerAction('voirCloture', voirCloture);
   enregistrerAction('supprimerCloture', demanderSuppressionCloture);
@@ -41,20 +49,71 @@ function messageNonConfigure() {
   </p>`;
 }
 
+// Ventes du jour actuellement affichées (évite de relire le dépôt à
+// chaque ouverture d'un ticket).
+let jourAffiche = { date: null, ventes: [] };
+
 export async function afficherHistorique(date = dateComptable()) {
   afficherChargement('Historique — ' + date);
   const configure = !!getConfigGithub();
   const ventes = await ventesDuJourFusionnees(date);
-  const texte = ventes.length
-    ? ventes.map(formaterTicketTexte).join('\n\n')
-    : "Aucune vente enregistrée pour cette journée.";
-  modal(`<h2>Historique du ${date} (${ventes.length} ticket${ventes.length > 1 ? 's' : ''})</h2>
+  jourAffiche = { date, ventes };
+  const total = Math.round(ventes.reduce((s, v) => s + v.totalTTC, 0) * 100) / 100;
+
+  let liste;
+  if (!ventes.length) {
+    liste = '<p class="confirm-txt">Aucune vente enregistrée pour cette journée.</p>';
+  } else {
+    // du plus récent au plus ancien : une copie demandée par un client
+    // concerne presque toujours un des derniers tickets
+    liste = [...ventes].reverse().map(v => {
+      const mode = v.modeConsommation ? libelleMode(v.modeConsommation) : '';
+      return `<button class="ticket-ligne" data-action="voirTicket" data-args="${attrArgs([v.numero, date])}">`
+        + `N° ${escapeHtml(v.numero)} · ${escapeHtml(v.heureAffichee)} · ${v.totalTTC.toFixed(2)} € · ${escapeHtml(v.modePaiement)}${mode ? ' · ' + mode : ''}`
+        + `</button>`;
+    }).join('');
+  }
+
+  modal(`<h2>Historique du ${date}</h2>
     ${configure ? '' : messageNonConfigure()}
-    <div class="cloture-texte">${escapeHtml(texte)}</div>
+    <div class="resume-jour">${ventes.length} ticket${ventes.length > 1 ? 's' : ''} — total ${total.toFixed(2)} €</div>
+    <div class="gestion-scroll">${liste}</div>
     <div class="modal-actions">
       <button class="btn-modal gris" data-action="ouvrirListeJoursVentes">📅 Autres journées</button>
       <button class="btn-modal vert" data-action="fermerModal">✅ Fermer</button>
     </div>`);
+}
+
+async function chercherTicket(numero, date) {
+  if (jourAffiche.date !== date) {
+    jourAffiche = { date, ventes: await ventesDuJourFusionnees(date) };
+  }
+  return jourAffiche.ventes.find(v => String(v.numero) === String(numero)) || null;
+}
+
+async function voirTicket(numero, date) {
+  const t = await chercherTicket(numero, date);
+  if (!t) return;
+  modal(`<h2>Ticket N° ${escapeHtml(t.numero)}</h2>
+    <div class="cloture-texte">${escapeHtml(formaterTicketTexte(t))}</div>
+    <div class="modal-actions" style="flex-wrap:wrap">
+      <button class="btn-modal vert" data-action="imprimerTicket" data-args="${attrArgs([t.numero, date])}">🖨 Imprimer une copie</button>
+      <button class="btn-modal gris" data-action="exporterCopieTicket" data-args="${attrArgs([t.numero, date])}">💾 Exporter (.txt)</button>
+      <button class="btn-modal rouge" data-action="afficherHistorique" data-args="${attrArgs([date])}">⬅ Retour</button>
+    </div>`);
+}
+
+async function imprimerCopieTicket(numero, date) {
+  const t = await chercherTicket(numero, date);
+  if (!t) return;
+  imprimerTexte(formaterTicketTexte(t, { copie: dateHeureCourante() }));
+}
+
+async function exporterCopieTicket(numero, date) {
+  const t = await chercherTicket(numero, date);
+  if (!t) return;
+  telechargerFichier(`ticket_${t.numero}_${t.dateComptable}_copie.txt`,
+    formaterTicketTexte(t, { copie: dateHeureCourante() }), 'text/plain');
 }
 
 export async function ouvrirListeJoursVentes() {
@@ -79,17 +138,31 @@ export async function ouvrirListeJoursVentes() {
   modal(h);
 }
 
+// En-tête de la fenêtre de clôture : à gauche du titre, un bouton (icône de
+// caisse enregistreuse) ouvre la "Clôture de caisse" (comptage du tiroir).
+const ICONE_CAISSE = `<svg viewBox="0 0 24 24" width="26" height="26" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+  <rect x="7" y="3" width="10" height="5" rx="1"/><path d="M5 8h14l2 7H3z"/><rect x="3" y="15" width="18" height="6" rx="1"/>
+  <path d="M7 11.5h.01M10.5 11.5h.01M14 11.5h.01M17 11.5h.01M8 18h8"/></svg>`;
+
+function enteteCloture(titre) {
+  return `<div class="cloture-entete">
+    <button class="btn-icone" data-action="ouvrirCaisse" title="Clôture de caisse (comptage)" aria-label="Clôture de caisse">${ICONE_CAISSE}</button>
+    <h2>${escapeHtml(titre)}</h2>
+    <span class="cloture-entete-vide"></span>
+  </div>`;
+}
+
 async function declencherCloture() {
   afficherChargement('Clôture en cours');
   const c = await cloturerEtSauvegarder();
   if (!c) {
-    modal(`<h2>Clôture</h2>
+    modal(`${enteteCloture('Clôture')}
       <p class="confirm-txt">Aucune vente pour cette journée.</p>
       <button class="btn-modal rouge full" data-action="fermerModal">FERMER</button>`);
     return;
   }
   ecrireFichierDossier(`cloture_${c.date}.txt`, c.texte);
-  modal(`<h2>CLÔTURE JOURNÉE</h2>
+  modal(`${enteteCloture('CLÔTURE JOURNÉE')}
     <div style="color:#aaa;text-align:center;margin-bottom:8px">${c.date}</div>
     <div class="cloture-texte">${escapeHtml(c.texte)}</div>
     <div class="modal-actions">
@@ -120,7 +193,7 @@ export async function ouvrirListeClotures() {
       const total = local[d] ? `${local[d].totalJour.toFixed(2)} €` : '(à consulter)';
       h += `<div class="fichier-ligne">
         <button class="fichier-btn" data-action="voirCloture" data-args="${attrArgs([d])}">cloture_${d} — ${total}</button>
-        <button class="btn-del" data-action="supprimerCloture" data-args="${attrArgs([d])}">🗑</button>
+        ${local[d] ? `<button class="btn-del" data-action="supprimerCloture" data-args="${attrArgs([d])}">🗑</button>` : ''}
       </div>`;
     });
   }
@@ -146,7 +219,8 @@ async function voirCloture(date) {
 
 function demanderSuppressionCloture(date) {
   modal(`<h2>Confirmation</h2>
-    <p class="confirm-txt">Supprimer la clôture du ${date} de la copie locale de cet appareil ? (ne supprime pas le fichier sur GitHub)</p>
+    <p class="confirm-txt">Supprimer la clôture du ${date} de CET appareil uniquement ?<br>
+      Le fichier du dépôt privé GitHub n'est PAS touché : la clôture restera consultable et exportable.</p>
     <div class="modal-actions">
       <button class="btn-modal rouge" data-action="ouvrirListeClotures">NON</button>
       <button class="btn-modal vert" data-action="confirmerSuppCloture" data-args="${attrArgs([date])}">OUI</button>

@@ -1,22 +1,31 @@
 /**
  * calculatrice.js — Logique pure de la calculette du panier ("Montant libre").
- * Le résultat validé est ajouté au panier avec un taux de TVA par défaut
- * de 6% (choix retenu pour les saisies manuelles, majoritairement de la
- * nourriture à emporter).
+ *
+ * Trois actions distinctes :
+ *  - calculer()  ("=")  : conclut le calcul affiché et garde le résultat à
+ *                         l'écran (on peut continuer à calculer dessus) ;
+ *  - ajouter()   ("OK") : ajoute le montant au panier ("Montant libre", TVA
+ *                         6 % par défaut) et vide l'écran ;
+ *  - corriger() ("⌫")   : retire le dernier caractère saisi ;
+ *  - effacer()  ("C")   : vide la saisie, sans toucher au panier.
  */
 import { ajouterArticle } from './panier.js';
 
 const TVA_MONTANT_LIBRE = 6;
+const OPERATEURS = '+-*/';
 
 export function creerCalculatrice() {
   let expression = '';
+  let apresEgal = false; // le contenu est un résultat : un chiffre repart de zéro
 
   function saisir(val) {
-    if ('+-*/'.includes(val)) {
-      if (!expression || '+-*/'.includes(expression.slice(-1))) return expression;
+    if (apresEgal && !OPERATEURS.includes(val)) { expression = ''; }
+    apresEgal = false;
+    if (OPERATEURS.includes(val)) {
+      if (!expression || OPERATEURS.includes(expression.slice(-1))) return expression;
     }
     if (val === '.') {
-      if (!expression || '+-*/'.includes(expression.slice(-1))) return expression;
+      if (!expression || OPERATEURS.includes(expression.slice(-1))) return expression;
       const dernier = expression.split(/[+\-*/]/).pop();
       if (dernier.includes('.')) return expression;
     }
@@ -28,27 +37,48 @@ export function creerCalculatrice() {
     return expression;
   }
 
-  function valider() {
-    if (!expression || '+-*/'.includes(expression.slice(-1))) {
-      expression = '';
-      return { erreur: true };
-    }
+  function corriger() {
+    expression = expression.slice(0, -1);
+    apresEgal = false;
+    return expression;
+  }
+
+  function effacer() {
+    expression = '';
+    apresEgal = false;
+    return expression;
+  }
+
+  // Évalue l'expression courante. Renvoie le résultat arrondi au centime,
+  // ou null si l'expression est incomplète / invalide / négative.
+  function evaluer() {
+    if (!expression || OPERATEURS.includes(expression.slice(-1))) return null;
+    if (!/^[0-9+\-*/.]+$/.test(expression)) return null;
     try {
       const resultat = Function('"use strict"; return (' + expression + ')')();
-      if (resultat < 0 || !isFinite(resultat)) throw new Error('Résultat invalide');
-      const r = Math.round(resultat * 100) / 100;
-      ajouterArticle('Montant libre', r, TVA_MONTANT_LIBRE);
-      expression = '';
-      return { erreur: false, valeur: r };
+      if (!isFinite(resultat) || resultat < 0) return null;
+      return Math.round(resultat * 100) / 100;
     } catch {
-      expression = '';
-      return { erreur: true };
+      return null;
     }
   }
 
-  return {
-    saisir,
-    valider,
-    getExpression: () => expression
-  };
+  function calculer() {
+    const r = evaluer();
+    if (r === null) return { erreur: true, expression };
+    expression = String(r);
+    apresEgal = true;
+    return { erreur: false, expression };
+  }
+
+  function ajouter() {
+    const r = evaluer();
+    if (r === null || r <= 0) return { erreur: true, expression };
+    ajouterArticle('Montant libre', r, TVA_MONTANT_LIBRE);
+    expression = '';
+    apresEgal = false;
+    return { erreur: false, valeur: r, expression };
+  }
+
+  return { saisir, corriger, effacer, calculer, ajouter, getExpression: () => expression };
 }

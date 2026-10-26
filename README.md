@@ -12,7 +12,7 @@ Deux dépôts GitHub séparés, avec des rôles bien distincts :
 | Dépôt | Contenu | Visibilité | Rôle |
 |---|---|---|---|
 | **Ce dépôt (public)** | Le code de l'application uniquement | Public (obligatoire pour GitHub Pages gratuit) | Hébergement du site |
-| **Dépôt privé** (à créer à part) | `catalogue.json`, `ventes/*.json`, `clotures/*.json` | Privé, gratuit | Sauvegarde des données en temps réel |
+| **Dépôt privé** (à créer à part) | `catalogue.json`, `ventes/tickets_AAAA-MM-JJ.json`, `clotures/cloture_AAAA-MM-JJ.json` | Privé, gratuit | Sauvegarde des données en temps réel |
 
 **Aucune donnée de vente ne se trouve jamais dans ce dépôt.** Le code
 ne contient que la logique de l'application ; les ventes réelles ne
@@ -64,10 +64,17 @@ js/
                                   (fonctions pures, sans DOM)
   ventes.js                       Sauvegarde d'une vente, lecture de l'historique
   numerotation.js                  Attribution des numéros de ticket (blocs partagés)
-  cloture.js                       Calcul et sauvegarde de la clôture journalière
+  cloture.js                       Calcul, sauvegarde et rassemblement des clôtures
+  cloture-auto.js                   Mise à jour automatique des clôtures des journées terminées
+  garde-code.js                      Pavé de code (logo = gestion, bouton Clôture)
+  impression.js                      Point d'entrée unique de l'impression papier (80 mm)
   export.js                         Export CSV/JSON, restauration, dossier local
   github-sync.js                     Synchronisation temps réel vers le dépôt privé
-  clavier.js                          Pavé numérique et clavier AZERTY réutilisables
+  clavier.js                          Pavé numérique, pavé de calcul et clavier AZERTY (chiffres, ⇧, ENTRÉE)
+  tri.js                               Ordre alphabétique d'affichage des articles
+  format.js                            Format des nombres (virgule décimale)
+  caisse.js                            Clôture de caisse : comptage, écart, enregistrement
+  ui-caisse.js                         Écrans du comptage et de son historique
   ui-modal.js                          Moteur générique de fenêtres modales
   ui-menu.js                            Navigation du menu de vente + panier
   ui-ristourne.js                        Pop-up de saisie d'une ristourne
@@ -94,11 +101,34 @@ js/
    peut aussi être choisi (bouton **Export**) pour une copie
    supplémentaire automatique sur le disque de l'appareil.
 
-Au démarrage, si la synchronisation GitHub est configurée, l'app relit
-le catalogue **depuis le dépôt privé** (la version partagée par tous les
-appareils), pas depuis le fichier statique `data/catalogue.json` de ce
-dépôt public (qui ne sert qu'à amorcer un tout premier appareil n'ayant
-jamais été connecté à GitHub).
+Au démarrage, le catalogue est pris dans cet ordre :
+1. le `catalogue.json` du **dépôt privé** (version partagée par tous les
+   appareils), si la synchronisation GitHub est configurée et joignable ;
+2. sinon la **copie locale** de l'appareil ;
+3. sinon le catalogue de **référence** `data/catalogue.json` de ce dépôt
+   public (il amorce un appareil neuf, ou un appareil jamais synchronisé).
+
+### Catalogue de référence et « reliquats » d'une ancienne version
+
+`data/catalogue.json` porte un numéro de génération (`version`). Toute
+copie d'une génération antérieure est considérée **obsolète** et écartée
+au profit de la référence, pour qu'aucun reliquat d'une ancienne version
+ne persiste, même sur un appareil non synchronisé :
+- **cache local obsolète** (tablette oubliée, ancien navigateur...) :
+  remplacé par la référence ;
+- **`catalogue.json` du dépôt privé obsolète** : l'ancien fichier est
+  d'abord archivé dans `archives/` (dépôt privé), puis remplacé par la
+  référence. Rien n'est perdu ;
+- **modifications de catalogue en attente d'envoi** créées sur l'ancienne
+  génération : abandonnées (les rejouer ferait réapparaître d'anciens
+  articles). Les **ventes et clôtures en attente ne sont jamais touchées** ;
+- un catalogue **à jour** (même personnalisé : prix modifiés, articles
+  ajoutés) n'est **jamais** écrasé.
+
+⚠️ Augmenter `VERSION_CATALOGUE` (dans `js/catalogue-patch.js`) en même
+temps que la `version` de `data/catalogue.json` réinitialise le catalogue
+de tous les appareils (les prix personnalisés sont remplacés ; l'ancienne
+version reste archivée). À ne faire que volontairement.
 
 ## Synchronisation multi-appareils : comment les conflits sont évités
 
@@ -162,6 +192,44 @@ fenêtre qui le demande.
 en Belgique en 2026 : les taux du catalogue (`data/catalogue.json`)
 doivent être validés avec ton comptable avant la mise en service.
 
+- **Clôture** : le bouton est protégé par le même code que le logo,
+  puis demande une confirmation. Il n'y a qu'UNE clôture par journée
+  comptable (une nouvelle clôture du même jour remplace la précédente).
+  Une fois la journée terminée (6 h), l'app recalcule automatiquement
+  sa clôture avec toutes les ventes (y compris celles faites après un
+  clic sur Clôture) et crée celles qui auraient été oubliées (14 derniers
+  jours). La poubelle de la liste des clôtures ne supprime que la copie
+  de l'appareil, jamais le fichier du dépôt privé.
+- **Exports CSV** (ventes et clôtures) : virgule décimale, séparateur « ; », ouverture directe dans Excel. **Toutes les clôtures** : fusionne cet appareil et le
+  dépôt privé, une ligne par journée (sans doublon), séparateur « ; »,
+  virgule décimale, ouverture directe dans Excel.
+- **Historique** : liste des tickets (le plus récent en premier) ;
+  un ticket s'ouvre seul et peut être imprimé ou exporté en **copie**
+  (mention « COPIE — DUPLICATA » + date de réimpression). L'impression
+  passe aujourd'hui par le navigateur (mise en page 80 mm) ; l'imprimante
+  thermique, le ticket cuisine et la coupe se brancheront plus tard dans
+  `impression.js` uniquement.
+- **Calculatrice** : « = » conclut le calcul, « ✔ OK » ajoute le montant
+  au panier, « ⌫ » corrige la dernière frappe, « C » vide la saisie.
+- **Clavier** de saisie : chiffres, majuscules/minuscules ; ⇧ une fois =
+  prochaine lettre en majuscule, deux fois = Caps Lock.
+
+- **Suppléments détaillés** : chaque supplément choisi est écrit sous son plat, un par ligne, en plus petit dans le panier et en retrait sur le ticket et dans l'enregistrement (colonne « Supplements » des CSV). Leur prix reste inclus dans le prix de la ligne.
+- **Livraison** : troisième mode (avec « À emporter » et « Sur place »), à
+  choisir pour chaque ticket. Mêmes taux de TVA qu'à emporter. Visible sur
+  le ticket, dans l'historique, les CSV et la clôture (TOTAL LIVRAISON).
+- **Clôture de caisse** (comptage du tiroir) : bouton « caisse » à gauche du
+  titre dans la fenêtre de Clôture. On écrit des lignes (`530 liquide`,
+  `-30 frites`, `10*50 billets`) avec ENTRÉE ; l'écart avec le liquide attendu
+  d'après les ventes est calculé. Valider enregistre `caisses/caisse_AAAA-MM-JJ_HHMMSS.json`
+  dans le dépôt privé (un fichier par comptage). Historique : menu du logo →
+  « Clôtures de caisse ».
+- **Menu du logo (code)** : Ajouter article, Clôtures, Clôtures de caisse,
+  Export & sauvegarde, Paramètres. Il n'y a plus de bouton Export dans la barre.
+- **Favoris** ⭐ : comme la promotion, discret (étoile à côté du nom), sans
+  changer la place de l'article. **Tri** : les articles sont affichés par ordre
+  alphabétique (Frites : Petite puis Grande ; Ristourne en dernier).
+
 ## Plats : deux logiques de prix
 
 - **Additif** (ex. Mitraillette, Assiette) : prix = format + prix de la
@@ -176,6 +244,18 @@ Dans les deux cas, la page des suppléments est toujours proposée ensuite.
 Un supplément peut être limité à certains formats (champ `formats`) ;
 si tu renommes un format, mets ce champ à jour dans le catalogue.
 
+## Journée comptable, Salades et suppléments
+
+- **Journée comptable** : elle va de 06:00 à 05:59 le lendemain. Un ticket émis le 23/10 à 00:30 appartient à la journée du **22/10**. Le calcul (`js/date-comptable.js`) utilise l'heure locale de la tablette, jamais l'heure UTC.
+- **Gestion** (logo, puis code) : le menu propose *Gestion Article* (produits rangés par onglets : Plats, Viandes, chaque rubrique, Suppléments), *Ajouter article*, *Clôtures*, *Clôtures de caisse*, *Export & sauvegarde* et *Paramètres*.
+- **Salades** : « Salade César » (9,00 € TTC, TVA 6 %) et « Salade Divers » (`special: "prix-libre"`), qui ouvre un pavé pour saisir le prix TTC de la salade sur mesure. La TVA de cet article se règle dans *Gestion Article*.
+- **Suppléments** : Salade, Tomates, Oignon (champ `ordre` 1, 2, 3, à 0 €) puis les suivants par ordre alphabétique, « Suppléments Divers » en dernier. Un supplément avec `"multiple": true` se clique plusieurs fois (bouton −1 pour en retirer un) et s'imprime « 2 x Suppléments Divers ».
+- **Supplément viande** (double hamburger…) : en tête de la page des suppléments, le bouton « 🥩 Supplément viande » ouvre la liste des viandes. Chaque viande choisie s'ajoute aux suppléments (« Supp. Hamburger ») au prix de la viande dans le catalogue ; « −1 » retire la dernière.
+- **Exports CSV** (ventes du jour, toutes les ventes, clôtures) : ils lisent l'appareil ET le dépôt privé, sans doublon (un ticket = un numéro, une clôture = une date). Si le dépôt n'est pas configuré ou injoignable, l'export contient les données de l'appareil et affiche l'alerte « Dépôt privé injoignable ou non configuré ».
+- **Purger le cache** (menu Gestion) : efface tout ce que l'appareil a enregistré (ventes, clôtures, comptages, catalogue local, jeton, caches de l'application). Le dépôt privé n'est pas touché. Un avertissement chiffre les éléments pas encore envoyés, qui seraient perdus.
+- **Légèreté** : un ticket est ajouté sans relire tout l'historique ; la copie locale des tickets de plus de 31 jours est retirée une fois qu'ils sont sur le dépôt privé (jamais ceux en attente d'envoi, jamais si la synchronisation n'est pas configurée) ; en cas de mémoire pleine, la place est faite automatiquement. La file d'envoi relit son état à chaque étape : une vente encaissée pendant un envoi n'est jamais perdue.
+- Le catalogue privé a priorité tant que `version` est identique : après une mise à jour du catalogue de l'application, remplacer `catalogue.json` dans le dépôt privé.
+
 ## Plein écran
 
 Un bouton unique dans la barre du haut : ⛶ passe en plein écran, ✕ en sort.
@@ -183,12 +263,20 @@ Le navigateur impose un clic (pas de plein écran automatique), et Safari
 sur iPhone ne le permet pas pour une page web : le bouton y est masqué
 (l'app installée sur l'écran d'accueil s'ouvre déjà sans barre d'adresse).
 
-## Mettre à jour l'application (rappel)
+## Mettre à jour l'application
 
-À chaque mise à jour de fichiers mis en cache, incrémenter `CACHE_NOM`
-dans `service-worker.js`, puis fermer/rouvrir l'app sur chaque appareil.
-Si la structure du catalogue change, suivre l'« Ordre de mise à jour »
-décrit dans le README du dépôt privé.
+Le service worker (fonctionnement hors-ligne) utilise la stratégie
+**réseau d'abord, cache en secours** : un appareil en ligne reçoit la
+version publiée sur GitHub dès le rechargement suivant (GitHub Pages peut
+mettre jusqu'à ~10 minutes à publier). Sans réseau, ou si le réseau met
+plus de 4 secondes à répondre, la copie en cache prend le relais : la
+caisse reste utilisable.
+
+- Pour un appareil encore sur l'ancienne stratégie : fermer puis rouvrir
+  l'app **deux fois** (la première charge le nouveau service worker).
+- Incrémenter `CACHE_NOM` dans `service-worker.js` uniquement si la
+  **liste des fichiers** à pré-charger change (fichier ajouté/retiré).
+- Si la structure du catalogue change, voir le README du dépôt privé.
 
 ## Modifier la société ou le mot de passe de gestion
 

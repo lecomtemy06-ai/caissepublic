@@ -10,7 +10,7 @@
 import { SOCIETE, LARGEUR_TICKET } from './config.js';
 import { Stockage } from './stockage.js';
 import { ventesDuJourFusionnees, dateComptable } from './ventes.js';
-import { fileAttendreSynchro } from './github-sync.js';
+import { fileAttendreSynchro, listerFichiersDistants, obtenirClotureDistante } from './github-sync.js';
 
 function centrer(txt, largeur) {
   txt = String(txt);
@@ -24,7 +24,7 @@ function centrer(txt, largeur) {
 export function calculerCloture(ventes, date) {
   if (!ventes.length) return null;
 
-  let totalLiquide = 0, totalBancontact = 0, totalEmporter = 0, totalSurPlace = 0;
+  let totalLiquide = 0, totalBancontact = 0, totalEmporter = 0, totalSurPlace = 0, totalLivraison = 0;
   const ventilationGlobale = {};
   const resumeTickets = [];
 
@@ -34,6 +34,7 @@ export function calculerCloture(ventes, date) {
 
     if (v.modeConsommation === 'EMPORTER') totalEmporter += v.totalTTC;
     else if (v.modeConsommation === 'SUR_PLACE') totalSurPlace += v.totalTTC;
+    else if (v.modeConsommation === 'LIVRAISON') totalLivraison += v.totalTTC;
 
     Object.entries(v.ventilation).forEach(([taux, val]) => {
       if (!ventilationGlobale[taux]) ventilationGlobale[taux] = { ht: 0, tva: 0, ttc: 0 };
@@ -49,6 +50,7 @@ export function calculerCloture(ventes, date) {
   totalBancontact = Math.round(totalBancontact * 100) / 100;
   totalEmporter = Math.round(totalEmporter * 100) / 100;
   totalSurPlace = Math.round(totalSurPlace * 100) / 100;
+  totalLivraison = Math.round(totalLivraison * 100) / 100;
   Object.keys(ventilationGlobale).forEach(t => {
     ventilationGlobale[t].ht = Math.round(ventilationGlobale[t].ht * 100) / 100;
     ventilationGlobale[t].tva = Math.round(ventilationGlobale[t].tva * 100) / 100;
@@ -60,9 +62,9 @@ export function calculerCloture(ventes, date) {
   const ticketMoyen = nbTickets ? totalJour / nbTickets : 0;
   const totalTVAJour = Math.round(Object.values(ventilationGlobale).reduce((s, v) => s + v.tva, 0) * 100) / 100;
 
-  const totalNonPrecise = Math.round((totalJour - totalEmporter - totalSurPlace) * 100) / 100;
+  const totalNonPrecise = Math.round((totalJour - totalEmporter - totalSurPlace - totalLivraison) * 100) / 100;
 
-  return { date, resumeTickets, ventilationGlobale, totalLiquide, totalBancontact, totalEmporter, totalSurPlace, totalNonPrecise, totalJour, nbTickets, ticketMoyen, totalTVAJour };
+  return { date, resumeTickets, ventilationGlobale, totalLiquide, totalBancontact, totalEmporter, totalSurPlace, totalLivraison, totalNonPrecise, totalJour, nbTickets, ticketMoyen, totalTVAJour };
 }
 
 export function formaterClotureTexte(c) {
@@ -88,6 +90,7 @@ export function formaterClotureTexte(c) {
   txt += sep2 + '\n';
   txt += 'TOTAL A EMPORTER'.padEnd(22) + (c.totalEmporter || 0).toFixed(2).padStart(9) + ' €\n';
   txt += 'TOTAL SUR PLACE'.padEnd(22) + (c.totalSurPlace || 0).toFixed(2).padStart(9) + ' €\n';
+  txt += 'TOTAL LIVRAISON'.padEnd(22) + (c.totalLivraison || 0).toFixed(2).padStart(9) + ' €\n';
   if (Math.abs(c.totalNonPrecise || 0) > 0.004) txt += 'MODE NON PRECISE'.padEnd(22) + c.totalNonPrecise.toFixed(2).padStart(9) + ' €\n';
   txt += sep2 + '\n';
   txt += 'NOMBRE DE TICKETS'.padEnd(22) + String(c.nbTickets).padStart(9) + '\n';
@@ -99,19 +102,65 @@ export function formaterClotureTexte(c) {
   return txt;
 }
 
-export async function cloturerEtSauvegarder(date = dateComptable()) {
+// Enregistre la clôture d'une journée (locale + file de synchronisation).
+// Il n'existe qu'UNE clôture par journée comptable : une nouvelle
+// clôture de la même date REMPLACE la précédente (ni doublon, ni
+// historique de versions). `origine` : "MANUELLE" (bouton) ou "AUTO"
+// (mise à jour automatique après la fin de la journée comptable).
+export async function cloturerEtSauvegarder(date = dateComptable(), origine = 'MANUELLE') {
   const ventes = await ventesDuJourFusionnees(date);
   const c = calculerCloture(ventes, date);
   if (!c) return null;
   const texte = formaterClotureTexte(c);
 
   const clotures = Stockage.chargerClotures();
-  clotures[date] = { ...c, dateHeureCloture: new Date().toISOString(), texte };
+  clotures[date] = { ...c, dateHeureCloture: new Date().toISOString(), origine, texte };
   Stockage.sauvegarderClotures(clotures);
 
   fileAttendreSynchro({ type: 'cloture', date, cloture: clotures[date] });
 
   return clotures[date];
+}
+
+// Rassemble TOUTES les clôtures connues (cette machine + dépôt privé)
+// sans doublon : une seule entrée par date, la plus récente l'emporte.
+// Renvoie { clotures: [...triées par date], locales, distantes,
+// distantInjoignable }.
+export async function rassemblerClotures() {
+  const parDate = new Map();
+  const retenir = (date, c) => {
+    if (!c) return;
+    const actuelle = parDate.get(date);
+    if (!actuelle || String(c.dateHeureCloture || '') > String(actuelle.dateHeureCloture || '')) {
+      parDate.set(date, { ...c, date });
+    }
+  };
+
+  const locales = Stockage.chargerClotures();
+  Object.entries(locales).forEach(([d, c]) => retenir(d, c));
+
+  const datesDistantes = await listerFichiersDistants('clotures');
+  let nbDistantes = 0;
+  if (datesDistantes) {
+    const file = [...datesDistantes];
+    // petits lots en parallèle pour rester rapide sans saturer l'API
+    const travailleur = async () => {
+      while (file.length) {
+        const d = file.shift();
+        const c = await obtenirClotureDistante(d);
+        if (c) { retenir(d, c); nbDistantes++; }
+      }
+    };
+    await Promise.all([travailleur(), travailleur(), travailleur(), travailleur()]);
+  }
+
+  const clotures = [...parDate.values()].sort((a, b) => a.date.localeCompare(b.date));
+  return {
+    clotures,
+    locales: Object.keys(locales).length,
+    distantes: nbDistantes,
+    distantInjoignable: datesDistantes === null
+  };
 }
 
 export function getCloture(date) {
