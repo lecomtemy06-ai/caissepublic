@@ -200,6 +200,7 @@ doivent être validés avec ton comptable avant la mise en service.
   clic sur Clôture) et crée celles qui auraient été oubliées (14 derniers
   jours). La poubelle de la liste des clôtures ne supprime que la copie
   de l'appareil, jamais le fichier du dépôt privé.
+- **Clôture de caisse : nom de fichier** `caisses/caisse_AAAA-MM-JJ_HHMMSS.json` où la date est la **journée comptable** couverte (06:00 à 05:59) et l'heure celle de l'écriture. Un comptage fait le 28/10 à 02:24 s'appelle `caisse_2026-10-27_022420.json`.
 - **Exports CSV** (ventes et clôtures) : virgule décimale, séparateur « ; », ouverture directe dans Excel. **Toutes les clôtures** : fusionne cet appareil et le
   dépôt privé, une ligne par journée (sans doublon), séparateur « ; »,
   virgule décimale, ouverture directe dans Excel.

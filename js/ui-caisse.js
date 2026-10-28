@@ -7,7 +7,7 @@ import { modal, fermerModal, escapeHtml, enregistrerAction, attrArgs } from './u
 import { creerClavierAzerty, creerPaveCalcul } from './clavier.js';
 import {
   analyserLigne, totalLignes, liquideAttendu, creerCaisse, formaterLigneCaisse, enregistrerCaisse,
-  listerCaisses, getCaisse, mettreEnCacheCaisse, supprimerCaisse
+  listerCaisses, getCaisse, mettreEnCacheCaisse, supprimerCaisse, cleTriCaisse
 } from './caisse.js';
 import { dateComptable } from './ventes.js';
 import { nombreFr } from './format.js';
@@ -152,7 +152,7 @@ export async function ouvrirListeCaisses() {
   const distantes = await listerFichiersDistants('caisses');
   const ensemble = new Set(Object.keys(local));
   (distantes || []).forEach(d => ensemble.add(d));
-  const ids = [...ensemble].sort().reverse();
+  const ids = [...ensemble].sort((x, y) => cleTriCaisse(y).localeCompare(cleTriCaisse(x))); // plus récent d'abord
 
   let h = `<h2>Clôtures de caisse</h2><div class="gestion-scroll">`;
   if (!ids.length) {

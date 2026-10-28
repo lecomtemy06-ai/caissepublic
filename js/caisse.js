@@ -64,21 +64,32 @@ export async function liquideAttendu(jour = dateComptable()) {
   }
 }
 
-export function identifiantCaisse(date = new Date()) {
-  return `${date.getFullYear()}-${pad2(date.getMonth() + 1)}-${pad2(date.getDate())}`
-    + `_${pad2(date.getHours())}${pad2(date.getMinutes())}${pad2(date.getSeconds())}`;
+// Identifiant (et nom de fichier) d'un comptage : JOURNÉE COMPTABLE + heure
+// réelle de l'écriture. Un comptage fait le 28 à 02:24 couvre la journée du
+// 27 : il s'appelle caisse_2026-10-27_022420 (voir date-comptable.js).
+export function identifiantCaisse(date = new Date(), jour = dateComptable(date)) {
+  return `${jour}_${pad2(date.getHours())}${pad2(date.getMinutes())}${pad2(date.getSeconds())}`;
+}
+
+// Clé de tri chronologique d'un identifiant : dans une même journée
+// comptable, les comptages d'après minuit (avant 06:00) viennent après ceux
+// de la soirée.
+export function cleTriCaisse(id) {
+  const [jour, heure = ''] = String(id).split('_');
+  return jour + (heure.slice(0, 2) < '06' ? '_1' : '_0') + heure;
 }
 
 // Construit l'objet "comptage de caisse" (sans l'enregistrer).
 export function creerCaisse({ lignes, attendu, jour, date = new Date() }) {
   const total = totalLignes(lignes);
+  const jourComptable = jour || dateComptable(date);
   const c = {
-    id: identifiantCaisse(date),
+    id: identifiantCaisse(date, jourComptable),
     type: 'cloture_caisse',
     horodatage: date.toISOString(),
     dateAffichee: date.toLocaleDateString('fr-BE'),
     heureAffichee: date.toLocaleTimeString('fr-BE'),
-    dateComptable: jour || dateComptable(),
+    dateComptable: jourComptable,
     appareil: Stockage.obtenirOuGenererIdentifiantCaisse(),
     lignes: lignes.map(l => ({ montant: l.montant, libelle: l.libelle })),
     total,
